@@ -1,0 +1,122 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum HomeworkStatus {
+  not_submitted
+  on_time
+  late
+}
+
+model Student {
+  id         Int       @id @default(autoincrement())
+  externalId Int?      @map("external_id")
+  nim        String    @unique
+  name       String?
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  subjects   Subject[]
+
+  @@map("students")
+}
+
+model Subject {
+  id          Int          @id @default(autoincrement())
+  externalId  Int          @map("external_id")
+  studentId   Int          @map("student_id")
+  kuliahAsal  Int          @map("kuliah_asal")
+  jenisSchema Int          @map("jenis_schema")
+  subjectName String       @map("subject_name")
+  dosen       String?
+  gelarDpn    String?      @map("gelar_dpn")
+  gelarBlk    String?      @map("gelar_blk")
+  nipDosen    String?      @map("nip_dosen")
+  nomorDosen  Int?         @map("nomor_dosen")
+  kodeKelas   String       @map("kode_kelas")
+  pararel     String
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  student     Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  schedules   Schedule[]
+  homeworks   Homework[]
+  attendances Attendance[]
+
+  @@unique([studentId, externalId])
+  @@map("subjects")
+}
+
+model Schedule {
+  id         Int      @id @default(autoincrement())
+  externalId Int?     @map("external_id")
+  subjectId  Int      @map("subject_id")
+  hari       String
+  jamAwal    String   @map("jam_awal")
+  jamAkhir   String   @map("jam_akhir")
+  nomorHari  Int      @map("nomor_hari")
+  nomorRuang Int?     @map("nomor_ruang")
+  ruang      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  subject    Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([subjectId])
+  @@unique([subjectId, hari, jamAwal, jamAkhir, nomorHari])
+  @@map("schedules")
+}
+
+model Homework {
+  id                     Int            @id @default(autoincrement())
+  externalId             Int            @map("external_id")
+  subjectId              Int            @map("subject_id")
+  title                  String
+  description            String
+  deadline                DateTime
+  deadlineIndonesia       String         @map("deadline_indonesia")
+  submissionTime          DateTime?      @map("submission_time")
+  submissionTimeIndonesia String?        @map("submission_time_indonesia")
+  tahun                   Int
+  semester                Int
+  fileCount               Int            @default(0) @map("file_count")
+  status                  HomeworkStatus @default(not_submitted)
+  deletedAt              DateTime?      @map("deleted_at")
+  createdAt              DateTime       @default(now()) @map("created_at")
+  updatedAt              DateTime       @updatedAt @map("updated_at")
+  subject                Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([subjectId])
+  @@unique([subjectId, externalId])
+  @@map("homeworks")
+}
+
+model Attendance {
+  id               Int       @id @default(autoincrement())
+  externalId       Int       @map("external_id")
+  subjectId        Int       @map("subject_id")
+  tahun            Int
+  semester         Int
+  date             DateTime
+  dateDisplay      String?   @map("date_display")
+  key              String
+  totalSessions    Int       @default(0) @map("total_sessions")
+  attendedSessions Int       @default(0) @map("attended_sessions")
+  attendanceRate   Float     @default(0) @map("attendance_rate")
+  deletedAt        DateTime? @map("deleted_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  subject          Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([subjectId])
+  @@index([subjectId, tahun, semester])
+  @@unique([subjectId, externalId])
+  @@map("attendances")
+}
