@@ -50,6 +50,7 @@ model Subject {
   schedules   Schedule[]
   homeworks   Homework[]
   attendances Attendance[]
+  presensiSessions PresensiSession[]
 
   @@unique([studentId, externalId])
   @@map("subjects")
@@ -119,4 +120,17 @@ model Attendance {
   @@index([subjectId, tahun, semester])
   @@unique([subjectId, externalId])
   @@map("attendances")
+}
+
+model PresensiSession {
+  id         Int      @id @default(autoincrement())
+  externalId String   @unique @map("external_id")
+  subjectId  Int      @map("subject_id")
+  tahun      Int?
+  semester   Int?
+  createdAt  DateTime @default(now()) @map("created_at")
+  subject    Subject  @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@index([subjectId])
+  @@map("presensi_sessions")
 }
