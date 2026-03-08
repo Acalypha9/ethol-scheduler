@@ -40,6 +40,13 @@ interface PresensiNotificationPayload {
   createdAt: Date;
 }
 
+interface AcademicPeriod {
+  tahun: number;
+  semester: number;
+}
+
+const UNKNOWN_SUBJECT_NAME = 'Unknown Subject';
+
 const INDONESIAN_MONTHS: Record<string, number> = {
   januari: 0,
   februari: 1,
@@ -150,18 +157,7 @@ export class SyncService implements OnModuleInit {
               kodeKelas: subject.kodeKelas,
               pararel: subject.pararel,
             },
-            update: {
-              kuliahAsal: subject.kuliahAsal,
-              jenisSchema: subject.jenisSchema,
-              subjectName: subject.subjectName,
-              dosen: subject.dosen,
-              gelarDpn: subject.gelarDpn,
-              gelarBlk: subject.gelarBlk,
-              nipDosen: subject.nipDosen,
-              nomorDosen: subject.nomorDosen,
-              kodeKelas: subject.kodeKelas,
-              pararel: subject.pararel,
-            },
+            update: this.buildSubjectUpdateData(subject),
           });
 
           subjectIdMap.set(subject.externalId, upsertedSubject.id);
@@ -456,7 +452,7 @@ export class SyncService implements OnModuleInit {
         ? record.subjectName
         : typeof record.namaMatakuliah === 'string'
           ? record.namaMatakuliah
-          : 'Unknown Subject';
+          : UNKNOWN_SUBJECT_NAME;
     const tahun = this.parseUnknownInt(record.tahun) ?? 0;
     const semester = this.parseUnknownInt(record.semester) ?? 0;
     const fileCount = Array.isArray(record.file)
@@ -513,18 +509,7 @@ export class SyncService implements OnModuleInit {
           kodeKelas: subject.kodeKelas,
           pararel: subject.pararel,
         },
-        update: {
-          kuliahAsal: subject.kuliahAsal,
-          jenisSchema: subject.jenisSchema,
-          subjectName: subject.subjectName,
-          dosen: subject.dosen,
-          gelarDpn: subject.gelarDpn,
-          gelarBlk: subject.gelarBlk,
-          nipDosen: subject.nipDosen,
-          nomorDosen: subject.nomorDosen,
-          kodeKelas: subject.kodeKelas,
-          pararel: subject.pararel,
-        },
+        update: this.buildSubjectUpdateData(subject),
       });
 
       subjectIdMap.set(subject.externalId, upsertedSubject.id);
@@ -559,10 +544,54 @@ export class SyncService implements OnModuleInit {
         kodeKelas: subject.kodeKelas,
         pararel: subject.pararel,
       },
-      update: {
-        subjectName: subject.subjectName,
-      },
+      update: this.buildSubjectUpdateData(subject),
     });
+  }
+
+  private buildSubjectUpdateData(subject: SubjectDraft): Prisma.SubjectUpdateInput {
+    const updateData: Prisma.SubjectUpdateInput = {};
+
+    if (subject.kuliahAsal > 0) {
+      updateData.kuliahAsal = subject.kuliahAsal;
+    }
+
+    if (subject.jenisSchema > 0) {
+      updateData.jenisSchema = subject.jenisSchema;
+    }
+
+    if (subject.subjectName && subject.subjectName !== UNKNOWN_SUBJECT_NAME) {
+      updateData.subjectName = subject.subjectName;
+    }
+
+    if (subject.dosen) {
+      updateData.dosen = subject.dosen;
+    }
+
+    if (subject.gelarDpn) {
+      updateData.gelarDpn = subject.gelarDpn;
+    }
+
+    if (subject.gelarBlk) {
+      updateData.gelarBlk = subject.gelarBlk;
+    }
+
+    if (subject.nipDosen) {
+      updateData.nipDosen = subject.nipDosen;
+    }
+
+    if (subject.nomorDosen !== null) {
+      updateData.nomorDosen = subject.nomorDosen;
+    }
+
+    if (subject.kodeKelas && subject.kodeKelas !== '-') {
+      updateData.kodeKelas = subject.kodeKelas;
+    }
+
+    if (subject.pararel && subject.pararel !== '-') {
+      updateData.pararel = subject.pararel;
+    }
+
+    return updateData;
   }
 
   private async syncHomeworkSnapshot(
@@ -809,6 +838,16 @@ export class SyncService implements OnModuleInit {
     return new Date();
   }
 
+  private getAcademicPeriod(date = new Date()): AcademicPeriod {
+    const month = date.getMonth() + 1;
+
+    if (month >= 8) {
+      return { tahun: date.getFullYear(), semester: 1 };
+    }
+
+    return { tahun: date.getFullYear() - 1, semester: 2 };
+  }
+
   private parseEtholDateOrNow(value: string): Date {
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed;
@@ -989,9 +1028,10 @@ export class SyncService implements OnModuleInit {
     student: StudentRecord,
     payload: PresensiNotificationPayload,
   ): Promise<void> {
+    const period = this.getAcademicPeriod(payload.createdAt);
     const subject = await this.findOrCreateSubject(tx, student, {
       externalId: payload.subjectNomor,
-      subjectName: 'Unknown Subject',
+      subjectName: UNKNOWN_SUBJECT_NAME,
       dosen: null,
       gelarDpn: null,
       gelarBlk: null,
@@ -1003,41 +1043,22 @@ export class SyncService implements OnModuleInit {
       jenisSchema: 0,
     });
 
-    const presensiSessionDelegate = (
-      tx as unknown as {
-        presensiSession?: {
-          upsert: (args: {
-            where: { externalId: string };
-            create: { externalId: string; subjectId: number; createdAt: Date };
-            update: { subjectId: number; createdAt: Date };
-          }) => Promise<unknown>;
-        };
-      }
-    ).presensiSession;
-
-    if (presensiSessionDelegate) {
-      await presensiSessionDelegate.upsert({
-        where: { externalId: payload.externalId },
-        create: {
-          externalId: payload.externalId,
-          subjectId: subject.id,
-          createdAt: payload.createdAt,
-        },
-        update: {
-          subjectId: subject.id,
-          createdAt: payload.createdAt,
-        },
-      });
-      return;
-    }
-
-    await tx.$executeRaw(Prisma.sql`
-      INSERT INTO "presensi_sessions" ("external_id", "subject_id", "created_at")
-      VALUES (${payload.externalId}, ${subject.id}, ${payload.createdAt})
-      ON CONFLICT ("external_id") DO UPDATE
-      SET "subject_id" = EXCLUDED."subject_id",
-          "created_at" = EXCLUDED."created_at"
-    `);
+    await tx.presensiSession.upsert({
+      where: { externalId: payload.externalId },
+      create: {
+        externalId: payload.externalId,
+        subjectId: subject.id,
+        tahun: period.tahun,
+        semester: period.semester,
+        createdAt: payload.createdAt,
+      },
+      update: {
+        subjectId: subject.id,
+        tahun: period.tahun,
+        semester: period.semester,
+        createdAt: payload.createdAt,
+      },
+    });
   }
 
   private getAttendanceExternalId(subjectNomor: number, key: string, date: string): number {
