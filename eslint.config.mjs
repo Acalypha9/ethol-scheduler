@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".wwebjs_auth/**",
+    ".wwebjs_cache/**",
+    "wa-bot/.wwebjs_auth/**",
+    "wa-bot/.wwebjs_cache/**",
+    "backend/**",
+    "wa-bot/**",
   ]),
 ]);
 
