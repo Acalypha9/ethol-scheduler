@@ -39,3 +39,29 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# auth credentials
+auth.json
+
+# whatsapp local session/cache
+.wwebjs_auth/
+.wwebjs_cache/
+wa-bot/.wwebjs_auth/
+wa-bot/.wwebjs_cache/
+
+# nested workspace artifacts
+backend/dist/
+backend/node_modules/
+wa-bot/node_modules/
+
+# local editor/agent state
+.vscode/
+.sisyphus/
+
+# temp files
+nul
+backend/nul
+wa-bot/curl_body.txt
+
+# local logs
+*.log
