@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const AUTH_FILE = path.join(process.cwd(), 'auth.json');
 const BASE_URL = 'https://ethol.pens.ac.id';
+const MIS_BASE_URL = 'https://mis.pens.ac.id';
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 const MAX_REDIRECTS = 15;
@@ -14,6 +15,7 @@ const MAX_REDIRECTS = 15;
 type ScheduleWithSubject = Prisma.ScheduleGetPayload<{ include: { subject: true } }>;
 type HomeworkWithSubject = Prisma.HomeworkGetPayload<{ include: { subject: true } }>;
 type AttendanceWithSubject = Prisma.AttendanceGetPayload<{ include: { subject: true } }>;
+type PresensiSessionSubject = Prisma.SubjectGetPayload<Record<string, never>>;
 
 // ── Auth persistence ──────────────────────────────────────────────
 
@@ -146,6 +148,10 @@ export class EtholService {
 
   isLoggedIn(): boolean {
     return this.loadAuth() !== null;
+  }
+
+  getCurrentAcademicPeriod(): { tahun: number; semester: number } {
+    return this.getActiveAcademicPeriod();
   }
 
   async login(email: string, password: string): Promise<void> {
@@ -538,6 +544,35 @@ export class EtholService {
     return { tahun: date.getFullYear() - 1, semester: 2 };
   }
 
+  private formatAttendanceDisplayDate(value: Date): string {
+    const formatter = new Intl.DateTimeFormat('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      weekday: 'long',
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+
+    const parts = formatter.formatToParts(value);
+    const weekday = parts.find((part) => part.type === 'weekday')?.value;
+    const day = parts.find((part) => part.type === 'day')?.value;
+    const month = parts.find((part) => part.type === 'month')?.value;
+    const year = parts.find((part) => part.type === 'year')?.value;
+    const hour = parts.find((part) => part.type === 'hour')?.value;
+    const minute = parts.find((part) => part.type === 'minute')?.value;
+    const second = parts.find((part) => part.type === 'second')?.value;
+
+    if (!weekday || !day || !month || !year || !hour || !minute || !second) {
+      return value.toISOString();
+    }
+
+    return `${weekday}, ${day} ${month} ${year} - ${hour}:${minute}:${second}`;
+  }
+
   async getScheduleDataFromDb(): Promise<CourseSchedule[]> {
     const nim = this.getCurrentNimFromSession();
 
@@ -637,76 +672,104 @@ export class EtholService {
       orderBy: [{ tahun: 'desc' }, { semester: 'desc' }, { date: 'desc' }],
     });
 
-    const presensiSessions = await this.prisma.$queryRaw<
-      { subjectId: number; createdAt: Date }[]
-    >`
-      SELECT ps."subject_id" AS "subjectId", ps."created_at" AS "createdAt"
-      FROM "presensi_sessions" ps
-      INNER JOIN "subjects" s ON s."id" = ps."subject_id"
-      INNER JOIN "students" st ON st."id" = s."student_id"
-      WHERE st."nim" = ${nim}
-    `;
+    const presensiSessions = await this.prisma.presensiSession.findMany({
+      where: {
+        subject: {
+          student: { nim },
+        },
+      },
+      include: {
+        subject: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-    const openedSessionDatesBySubject = new Map<number, Set<string>>();
-    for (const session of presensiSessions) {
-      const dateKey = toJakartaDateKey(new Date(session.createdAt));
-      const subjectDates = openedSessionDatesBySubject.get(session.subjectId);
-      if (subjectDates) {
-        subjectDates.add(dateKey);
-      } else {
-        openedSessionDatesBySubject.set(session.subjectId, new Set([dateKey]));
+    type AttendanceGroup = {
+      subject: AttendanceWithSubject['subject'] | PresensiSessionSubject;
+      tahun: number;
+      semester: number;
+      attendanceRows: AttendanceWithSubject[];
+      attendedDates: Set<string>;
+      openedDates: Set<string>;
+      latestPresensiAt: Date | null;
+    };
+
+    const grouped = new Map<string, AttendanceGroup>();
+    const ensureGroup = (
+      key: string,
+      subject: AttendanceWithSubject['subject'] | PresensiSessionSubject,
+      tahun: number,
+      semester: number,
+    ): AttendanceGroup => {
+      const existing = grouped.get(key);
+      if (existing) {
+        return existing;
       }
-    }
 
-    const grouped = new Map<string, AttendanceWithSubject[]>();
-    const attendedDatesByGroup = new Map<string, Set<string>>();
+      const created: AttendanceGroup = {
+        subject,
+        tahun,
+        semester,
+        attendanceRows: [],
+        attendedDates: new Set<string>(),
+        openedDates: new Set<string>(),
+        latestPresensiAt: null,
+      };
+      grouped.set(key, created);
+      return created;
+    };
+
     for (const attendance of attendances) {
       const key = `${attendance.subject.externalId}:${attendance.tahun}:${attendance.semester}`;
-      const list = grouped.get(key);
-      if (list) {
-        list.push(attendance);
-      } else {
-        grouped.set(key, [attendance]);
-      }
-
+      const group = ensureGroup(key, attendance.subject, attendance.tahun, attendance.semester);
+      group.attendanceRows.push(attendance);
       const attendedDateKey = toJakartaDateKey(new Date(attendance.date));
-      const attendedDateSet = attendedDatesByGroup.get(key);
-      if (attendedDateSet) {
-        attendedDateSet.add(attendedDateKey);
-      } else {
-        attendedDatesByGroup.set(key, new Set([attendedDateKey]));
+      group.attendedDates.add(attendedDateKey);
+    }
+
+    for (const session of presensiSessions) {
+      const period =
+        session.tahun && session.semester
+          ? { tahun: session.tahun, semester: session.semester }
+          : this.getActiveAcademicPeriod(session.createdAt);
+      const key = `${session.subject.externalId}:${period.tahun}:${period.semester}`;
+      const group = ensureGroup(key, session.subject, period.tahun, period.semester);
+      group.openedDates.add(toJakartaDateKey(new Date(session.createdAt)));
+      if (!group.latestPresensiAt || session.createdAt > group.latestPresensiAt) {
+        group.latestPresensiAt = session.createdAt;
       }
     }
 
     const result: AttendanceItem[] = [];
-    for (const [key, historyRows] of grouped.entries()) {
-      if (historyRows.length === 0) continue;
+    for (const group of grouped.values()) {
+      group.attendanceRows.sort((a, b) => b.date.getTime() - a.date.getTime());
 
-      const first = historyRows[0];
-      const attendedDates = attendedDatesByGroup.get(key) ?? new Set<string>();
-      const sessionDates = openedSessionDatesBySubject.get(first.subjectId);
-      const totalSessionDates = new Set(attendedDates);
-      if (sessionDates) {
-        for (const dateKey of sessionDates) {
-          totalSessionDates.add(dateKey);
-        }
+      const first = group.attendanceRows[0] ?? null;
+      const totalSessionDates = new Set(group.attendedDates);
+      for (const dateKey of group.openedDates) {
+        totalSessionDates.add(dateKey);
       }
 
-      const attendedSessions = attendedDates.size;
+      const attendedSessions = group.attendedDates.size;
       const totalSessions = totalSessionDates.size;
       const attendanceRate =
         totalSessions === 0 ? 0 : (attendedSessions / totalSessions) * 100;
+      const representativeDate = first
+        ? first.dateDisplay ?? first.date.toISOString()
+        : group.latestPresensiAt
+          ? this.formatAttendanceDisplayDate(group.latestPresensiAt)
+          : '';
 
       result.push({
-        subjectName: first.subject.subjectName,
-        subjectNomor: first.subject.externalId,
-        tahun: first.tahun,
-        semester: first.semester,
-        date: first.dateDisplay ?? first.date.toISOString(),
+        subjectName: group.subject.subjectName,
+        subjectNomor: group.subject.externalId,
+        tahun: group.tahun,
+        semester: group.semester,
+        date: representativeDate,
         totalSessions,
         attendedSessions,
         attendanceRate,
-        history: historyRows.map((row) => ({
+        history: group.attendanceRows.map((row) => ({
           date: row.dateDisplay ?? row.date.toISOString(),
           key: row.key,
         })),
@@ -868,6 +931,43 @@ export class EtholService {
 
     const res = await fetch(url.toString(), fetchOpts);
     const text = await res.text();
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      return text;
+    }
+  }
+
+  async getMisSchedule(tahun?: number, semester?: number): Promise<unknown> {
+    const auth = this.loadAuth();
+    if (!auth) {
+      throw new Error('Not logged in. Please login first.');
+    }
+
+    const activePeriod = this.getActiveAcademicPeriod();
+    const resolvedTahun = tahun ?? activePeriod.tahun;
+    const resolvedSemester = semester ?? activePeriod.semester;
+
+    const url = new URL(`${MIS_BASE_URL}/jadwal_kul.php`);
+    url.searchParams.set('valTahun', String(resolvedTahun));
+    url.searchParams.set('valSemester', String(resolvedSemester));
+
+    const res = await fetch(url.toString(), {
+      headers: {
+        'User-Agent': USER_AGENT,
+        token: auth.token,
+        Referer: BASE_URL,
+        Origin: BASE_URL,
+      },
+      redirect: 'manual',
+      cache: 'no-store',
+    });
+
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`MIS schedule request failed with status ${res.status}`);
+    }
 
     try {
       return JSON.parse(text);
