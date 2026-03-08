@@ -7,46 +7,54 @@ import { SyncService } from '../sync/sync.service';
 const ETHOL_WS_URL = 'wss://chat.ethol.pens.ac.id/socket';
 const ETHOL_API_BASE = 'https://ethol.pens.ac.id';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
-const POLL_INTERVAL_MS = process.env.POLL_INTERVAL_MS ? parseInt(process.env.POLL_INTERVAL_MS) : 10_000;
-const RECONNECT_DELAY_MS = 3_000;
-const MAX_RECONNECT_ATTEMPTS = 5;
+const MIN_POLL_INTERVAL_MS = 5_000;
+const MAX_POLL_INTERVAL_MS = 8_000;
+const UPSTREAM_CONNECT_TIMEOUT_MS = 5_000;
 
 interface UpstreamConnection {
   ws: WsClient;
   token: string;
-  reconnectAttempts: number;
+  opened: boolean;
+  connectTimeout: NodeJS.Timeout;
+  expectedPollingFallback: boolean;
 }
 
 @Injectable()
 export class NotificationService implements OnModuleDestroy {
   private readonly logger = new Logger(NotificationService.name);
   private upstreamConnections = new Map<string, UpstreamConnection>();
+  private upstreamPollingOnlyTokens = new Set<string>();
   private pollIntervals = new Map<string, NodeJS.Timeout>();
   private seenNotifications = new Map<string, Set<string>>();
 
   constructor(
     @Inject(forwardRef(() => NotificationGateway)) private readonly gateway: NotificationGateway,
     private readonly syncService: SyncService,
-  ) {}
+  ) { }
 
   onModuleDestroy() {
     // Clean up all upstream connections and intervals
     for (const [, conn] of this.upstreamConnections) {
+      clearTimeout(conn.connectTimeout);
       conn.ws.close();
     }
-    for (const [, interval] of this.pollIntervals) {
-      clearInterval(interval);
+    for (const [, timeout] of this.pollIntervals) {
+      clearTimeout(timeout);
     }
   }
 
   ensureUpstreamConnection(token: string) {
-    if (this.upstreamConnections.has(token)) return;
-    this.connectToEthol(token);
     this.startPolling(token);
+
+    if (this.upstreamConnections.has(token) || this.upstreamPollingOnlyTokens.has(token)) {
+      return;
+    }
+
+    this.connectToEthol(token);
   }
 
-  private connectToEthol(token: string, attempt = 0) {
-    this.logger.log(`Connecting to ETHOL WebSocket${attempt > 0 ? ` (attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS})` : ''}...`);
+  private connectToEthol(token: string) {
+    this.logger.log('Connecting to ETHOL WebSocket...');
 
     const ws = new WsClient(ETHOL_WS_URL, {
       headers: {
@@ -55,17 +63,21 @@ export class NotificationService implements OnModuleDestroy {
       },
     });
 
-    const conn: UpstreamConnection = { ws, token, reconnectAttempts: attempt };
+    const connectTimeout = setTimeout(() => {
+      conn.expectedPollingFallback = true;
+      ws.terminate();
+    }, UPSTREAM_CONNECT_TIMEOUT_MS);
+
+    const conn: UpstreamConnection = { ws, token, opened: false, connectTimeout, expectedPollingFallback: false };
     this.upstreamConnections.set(token, conn);
 
     ws.on('open', () => {
       this.logger.log('Connected to ETHOL WebSocket');
-      conn.reconnectAttempts = 0;
+      conn.opened = true;
+      clearTimeout(conn.connectTimeout);
+      this.upstreamPollingOnlyTokens.delete(token);
 
-      // Send auth token to ETHOL WS (ETHOL may expect token as first message)
-      ws.send(JSON.stringify({ token }));
-
-      this.gateway.broadcastToAll('ethol_ws_connected', {
+      this.notifyTokenClients(token, 'ethol_ws_connected', {
         message: 'Connected to ETHOL real-time server',
       });
     });
@@ -81,50 +93,87 @@ export class NotificationService implements OnModuleDestroy {
         parsed = messageStr;
       }
 
-      // Forward to all connected downstream clients
-      this.gateway.broadcastToAll('ethol_message', parsed);
+      this.notifyTokenClients(token, 'ethol_message', parsed);
     });
 
     ws.on('close', (code: number, reason: Buffer) => {
-      this.logger.warn(`ETHOL WS closed: ${code} ${reason.toString()}`);
+      clearTimeout(conn.connectTimeout);
       this.upstreamConnections.delete(token);
+      this.upstreamPollingOnlyTokens.add(token);
 
-      const nextAttempt = conn.reconnectAttempts + 1;
-      if (nextAttempt <= MAX_RECONNECT_ATTEMPTS) {
-        setTimeout(() => {
-          const hasClients = Array.from(this.gateway.getConnectedClients().values()).some(c => c.token === token);
-          if (hasClients) {
-            this.connectToEthol(token, nextAttempt);
-          }
-        }, RECONNECT_DELAY_MS);
-      } else {
-        this.logger.warn('ETHOL WS: max reconnect attempts reached. Upstream WS disabled (REST polling still active).');
+      if (conn.opened) {
+        this.logger.warn('ETHOL WS disconnected after opening. Continuing with polling updates only.');
+      } else if (!conn.expectedPollingFallback) {
+        this.logger.debug(`ETHOL WS closed before opening: ${code} ${reason.toString()}`);
       }
+
+      this.notifyTokenClients(token, 'upstream_ws_unavailable', {
+        message: conn.opened
+          ? 'ETHOL real-time upstream disconnected. Continuing with polling updates every 5-8 seconds.'
+          : `ETHOL real-time upstream did not respond within ${UPSTREAM_CONNECT_TIMEOUT_MS / 1000} seconds. Continuing with polling updates every 5-8 seconds.`,
+      });
     });
 
     ws.on('error', (err: Error) => {
+      if (conn.expectedPollingFallback && !conn.opened) {
+        return;
+      }
+
       this.logger.debug(`ETHOL WS error: ${err.message}`);
     });
+  }
+
+  private notifyTokenClients(token: string, event: string, data: unknown) {
+    for (const [client, meta] of this.gateway.getConnectedClients()) {
+      if (meta.token === token) {
+        this.gateway.sendToClient(client, event, data);
+      }
+    }
   }
 
   private startPolling(token: string) {
     if (this.pollIntervals.has(token)) return;
 
-    // Polling starts after first interval (initial fetch handled by fetchAndSendNotifications)
+    this.scheduleNextPoll(token);
+  }
 
-    // Then poll periodically
-    const interval = setInterval(() => {
+  private scheduleNextPoll(token: string, delayMs = this.getRandomPollIntervalMs()) {
+    const existingTimeout = this.pollIntervals.get(token);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+
+    const timeout = setTimeout(async () => {
       const hasClients = Array.from(this.gateway.getConnectedClients().values()).some(c => c.token === token);
       if (!hasClients) {
-        clearInterval(interval);
         this.pollIntervals.delete(token);
         this.seenNotifications.delete(token);
+        this.upstreamPollingOnlyTokens.delete(token);
         return;
       }
-      this.pollNotifications(token);
-    }, POLL_INTERVAL_MS);
 
-    this.pollIntervals.set(token, interval);
+      try {
+        await this.pollNotifications(token);
+      } finally {
+        if (this.gateway.getConnectedClients().size > 0) {
+          const stillHasClients = Array.from(this.gateway.getConnectedClients().values()).some(c => c.token === token);
+          if (stillHasClients) {
+            this.scheduleNextPoll(token);
+            return;
+          }
+        }
+
+        this.pollIntervals.delete(token);
+        this.seenNotifications.delete(token);
+        this.upstreamPollingOnlyTokens.delete(token);
+      }
+    }, delayMs);
+
+    this.pollIntervals.set(token, timeout);
+  }
+
+  private getRandomPollIntervalMs(): number {
+    return MIN_POLL_INTERVAL_MS + Math.floor(Math.random() * (MAX_POLL_INTERVAL_MS - MIN_POLL_INTERVAL_MS + 1));
   }
 
   private async pollNotifications(token: string) {
@@ -284,7 +333,7 @@ export class NotificationService implements OnModuleDestroy {
   }
 
   private async fireWebhook(token: string, type: string, notification: Record<string, unknown>) {
-    const webhookUrl = process.env.WHATSAPP_WEBHOOK_URL ?? 'http://localhost:3005/webhook';
+    const webhookUrl = process.env.WHATSAPP_WEBHOOK_URL ?? 'http://127.0.0.1:3005/webhook';
 
     try {
       const response = await fetch(webhookUrl, {
