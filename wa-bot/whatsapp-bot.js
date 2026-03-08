@@ -30,10 +30,11 @@ for (const envPath of [
 }
 
 const WA_AUTH_DATA_PATH = path.resolve(__dirname, ".wwebjs_auth");
+const ENV_TARGET_CHAT_PLACEHOLDER = "6281234567890@c.us";
 
 const app = express();
 const port = Number(process.env.BOT_PORT || "3005");
-const TARGET_CHAT_ID = process.env.TARGET_CHAT_ID || "6281295698121@c.us";
+const TARGET_CHAT_ID = String(process.env.TARGET_CHAT_ID || "").trim();
 const API_BASE_URL = process.env.API_BASE_URL || "http://127.0.0.1:4000";
 const NOTIFICATION_WS_BASE = process.env.NOTIFICATION_WS_URL || "ws://127.0.0.1:4000/ws/notifications";
 const NOTIFICATION_WS_RECONNECT_MS = 5000;
@@ -227,43 +228,67 @@ let notificationConnecting = false;
 const seenNotificationIds = new Set();
 const recentNotificationKeys = new Map();
 const pendingMessages = [];
-let mentionCache = {
-  chatId: "",
-  mentionIds: [],
-  expiresAt: 0,
-};
+const mentionCache = new Map();
 
-async function getNotificationMentionIds() {
+function getConfiguredTargetChatId() {
+  if (!TARGET_CHAT_ID || TARGET_CHAT_ID === ENV_TARGET_CHAT_PLACEHOLDER) {
+    return "";
+  }
+
+  return TARGET_CHAT_ID;
+}
+
+function resetMentionCache(chatId) {
+  if (chatId) {
+    mentionCache.delete(chatId);
+    return;
+  }
+
+  mentionCache.clear();
+}
+
+async function getTargetChatIds() {
+  const configuredTargetChatId = getConfiguredTargetChatId();
+  if (configuredTargetChatId) {
+    return [configuredTargetChatId];
+  }
+
   if (!waReady) {
     return [];
   }
 
-  if (
-    mentionCache.chatId === TARGET_CHAT_ID &&
-    mentionCache.expiresAt > Date.now() &&
-    Array.isArray(mentionCache.mentionIds)
-  ) {
-    return mentionCache.mentionIds;
+  const chats = await waClient.getChats();
+  return chats
+    .filter((chat) => chat?.isGroup && chat.id?._serialized)
+    .map((chat) => chat.id._serialized);
+}
+
+async function getNotificationMentionIds(chatId) {
+  if (!waReady) {
+    return [];
+  }
+
+  const cached = mentionCache.get(chatId);
+  if (cached && cached.expiresAt > Date.now() && Array.isArray(cached.mentionIds)) {
+    return cached.mentionIds;
   }
 
   try {
-    const chat = await waClient.getChatById(TARGET_CHAT_ID);
+    const chat = await waClient.getChatById(chatId);
     if (!chat?.isGroup || !Array.isArray(chat.participants)) {
-      mentionCache = {
-        chatId: TARGET_CHAT_ID,
+      mentionCache.set(chatId, {
         mentionIds: [],
         expiresAt: Date.now() + GROUP_MENTION_CACHE_TTL_MS,
-      };
+      });
       return [];
     }
 
     const selfId = waClient.info?.wid?._serialized || "";
     const mentionIds = getMentionTargetIds(chat.participants, selfId);
-    mentionCache = {
-      chatId: TARGET_CHAT_ID,
+    mentionCache.set(chatId, {
       mentionIds,
       expiresAt: Date.now() + GROUP_MENTION_CACHE_TTL_MS,
-    };
+    });
     return mentionIds;
   } catch (error) {
     console.error("[Bot WA] Failed to resolve mention targets:", error.message || error);
@@ -272,29 +297,38 @@ async function getNotificationMentionIds() {
 }
 
 async function sendPreparedMessage(payload) {
+  const targetChatIds = await getTargetChatIds();
+  if (targetChatIds.length === 0) {
+    return false;
+  }
+
   if (typeof payload === "string") {
-    await waClient.sendMessage(TARGET_CHAT_ID, payload);
-    return;
+    await Promise.all(targetChatIds.map((chatId) => waClient.sendMessage(chatId, payload)));
+    return true;
   }
 
   if (payload && payload.kind === "notification") {
-    const mentionIds = shouldMentionAll(payload.type)
-      ? await getNotificationMentionIds()
-      : [];
-    const text = buildNotificationText(
-      payload.eventName,
-      payload.type,
-      payload.data,
-      mentionIds
-    );
-    const options = mentionIds.length > 0 ? { mentions: mentionIds } : undefined;
-    await waClient.sendMessage(TARGET_CHAT_ID, text, options);
-    return;
+    for (const chatId of targetChatIds) {
+      const mentionIds = shouldMentionAll(payload.type)
+        ? await getNotificationMentionIds(chatId)
+        : [];
+      const text = buildNotificationText(
+        payload.eventName,
+        payload.type,
+        payload.data,
+        mentionIds
+      );
+      const options = mentionIds.length > 0 ? { mentions: mentionIds } : undefined;
+      await waClient.sendMessage(chatId, text, options);
+    }
+    return true;
   }
 
   if (payload && typeof payload === "object" && typeof payload.text === "string") {
-    await waClient.sendMessage(TARGET_CHAT_ID, payload.text, payload.options);
-    return;
+    await Promise.all(
+      targetChatIds.map((chatId) => waClient.sendMessage(chatId, payload.text, payload.options))
+    );
+    return true;
   }
 
   throw new Error("Unsupported outbound message payload");
@@ -306,10 +340,10 @@ async function sendOrQueueMessage(message) {
     while (pendingMessages.length > MAX_PENDING_MESSAGES) {
       pendingMessages.shift();
     }
-    return;
+    return true;
   }
 
-  await sendPreparedMessage(message);
+  return await sendPreparedMessage(message);
 }
 
 async function flushPendingMessages() {
@@ -322,7 +356,11 @@ async function flushPendingMessages() {
     }
 
     try {
-      await sendPreparedMessage(message);
+      const sent = await sendPreparedMessage(message);
+      if (!sent) {
+        failedMessages.push(message);
+        break;
+      }
     } catch (error) {
       console.error("[Bot WA] Failed to flush queued message:", error.message || error);
       failedMessages.push(message);
@@ -342,12 +380,15 @@ async function deliverNotification(eventName, type, data) {
     return false;
   }
 
-  await sendOrQueueMessage({
+  const sent = await sendOrQueueMessage({
     kind: "notification",
     eventName,
     type,
     data,
   });
+  if (!sent) {
+    return false;
+  }
   rememberSeenNotification(key);
   recentNotificationKeys.set(key, Date.now());
   return true;
@@ -518,11 +559,7 @@ waClient.on("auth_failure", (msg) => {
 waClient.on("disconnected", (reason) => {
   console.log("WhatsApp disconnected:", reason);
   waReady = false;
-  mentionCache = {
-    chatId: "",
-    mentionIds: [],
-    expiresAt: 0,
-  };
+  resetMentionCache();
 });
 
 waClient.on("message", async (msg) => {
