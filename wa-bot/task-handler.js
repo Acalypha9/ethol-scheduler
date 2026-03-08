@@ -15,6 +15,70 @@ function parseIndexArg(args, prefix) {
   return null;
 }
 
+function getTaskUsageMessage() {
+  return [
+    "Format /task:",
+    "- /task -> tampilkan tugas yang deadline-nya belum lewat",
+    "- /task y{nomor} s{nomor} -> tampilkan riwayat tugas berdasarkan urutan tahun dan semester",
+    "",
+    "Contoh:",
+    "- /task",
+    "- /task y2 s1",
+    "",
+    "Catatan: argumen y{} dan s{} harus dipakai bersama.",
+  ].join("\n");
+}
+
+function validateTaskArgs(args) {
+  const tokens = Array.isArray(args)
+    ? args
+      .slice(1)
+      .map((value) => String(value || "").trim())
+      .filter((value) => value.length > 0)
+    : [];
+
+  if (tokens.length === 0) {
+    return {
+      isValid: true,
+      useHistoryFilter: false,
+      yearIndex: null,
+      semesterIndex: null,
+    };
+  }
+
+  if (tokens.length !== 2) {
+    return {
+      isValid: false,
+      message: getTaskUsageMessage(),
+    };
+  }
+
+  const yearIndex = parseIndexArg(tokens, "y");
+  const semesterIndex = parseIndexArg(tokens, "s");
+
+  if (yearIndex === null || semesterIndex === null) {
+    return {
+      isValid: false,
+      message: getTaskUsageMessage(),
+    };
+  }
+
+  const hasOnlyValidTokens = tokens.every((token) => /^y\d+$/i.test(token) || /^s\d+$/i.test(token));
+  if (!hasOnlyValidTokens) {
+    return {
+      isValid: false,
+      message: getTaskUsageMessage(),
+    };
+  }
+
+  return {
+    isValid: true,
+    useHistoryFilter: true,
+    yearIndex,
+    semesterIndex,
+  };
+}
+
 function toNumber(value) {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
@@ -46,6 +110,15 @@ function getDeadlineDate(item) {
   return null;
 }
 
+function hasUpcomingDeadline(item, now = Date.now()) {
+  const deadline = getDeadlineDate(item);
+  if (!deadline) {
+    return false;
+  }
+
+  return deadline.getTime() > now;
+}
+
 function getTaskTitle(item) {
   if (!item || typeof item !== "object") {
     return "Tugas tanpa judul";
@@ -58,6 +131,24 @@ function getTaskTitle(item) {
     item.tugas ||
     "Tugas tanpa judul"
   );
+}
+
+function getTaskSubjectName(item) {
+  if (!item || typeof item !== "object") {
+    return "";
+  }
+
+  const rawSubject =
+    item.subjectName ||
+    item.subject ||
+    item.namaMatakuliah ||
+    item.namaMatkul ||
+    item.mataKuliah ||
+    item.matkul ||
+    item.matakuliah?.nama ||
+    "";
+
+  return typeof rawSubject === "string" ? rawSubject.trim() : "";
 }
 
 function isPendingTask(item) {
@@ -103,14 +194,91 @@ function getIsoWeek(date) {
     return null;
   }
 
-  const utcDate = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-  );
-  const day = utcDate.getUTCDay() || 7;
-  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - day);
+  const jakartaDate = getJakartaCalendarDate(date);
+  if (!jakartaDate) {
+    return null;
+  }
 
-  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
-  return Math.ceil(((utcDate - yearStart) / 86400000 + 1) / 7);
+  const day = jakartaDate.getUTCDay() || 7;
+  jakartaDate.setUTCDate(jakartaDate.getUTCDate() + 4 - day);
+
+  const yearStart = new Date(Date.UTC(jakartaDate.getUTCFullYear(), 0, 1));
+  return Math.ceil(((jakartaDate - yearStart) / 86400000 + 1) / 7);
+}
+
+function getAcademicYear(item) {
+  return toNumber(item && typeof item === "object" ? item.tahun : null);
+}
+
+function getAcademicSemester(item) {
+  return toNumber(
+    item && typeof item === "object"
+      ? item.semester ?? item.smt ?? item.semesterKe
+      : null
+  );
+}
+
+function getSemesterGroupKey(item) {
+  const tahun = getAcademicYear(item);
+  const semester = getAcademicSemester(item);
+
+  if (tahun === null || semester === null) {
+    return null;
+  }
+
+  return `${tahun}:${semester}`;
+}
+
+function getWeekStartUtcTimestamp(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const jakartaDate = getJakartaCalendarDate(date);
+  if (!jakartaDate) {
+    return null;
+  }
+
+  const day = jakartaDate.getUTCDay() || 7;
+  jakartaDate.setUTCDate(jakartaDate.getUTCDate() - day + 1);
+  jakartaDate.setUTCHours(0, 0, 0, 0);
+
+  return jakartaDate.getTime();
+}
+
+function buildSemesterWeekMaps(tasks) {
+  const rawBuckets = new Map();
+
+  for (const item of tasks) {
+    const deadline = getDeadlineDate(item);
+    const semesterKey = getSemesterGroupKey(item);
+    const weekStart = deadline ? getWeekStartUtcTimestamp(deadline) : null;
+
+    if (!semesterKey || weekStart === null) {
+      continue;
+    }
+
+    if (!rawBuckets.has(semesterKey)) {
+      rawBuckets.set(semesterKey, new Set());
+    }
+
+    rawBuckets.get(semesterKey).add(weekStart);
+  }
+
+  const weekMaps = new Map();
+
+  for (const [semesterKey, bucketSet] of rawBuckets.entries()) {
+    const weekMap = new Map();
+    const sortedBuckets = [...bucketSet].sort((a, b) => a - b);
+
+    sortedBuckets.forEach((bucket, index) => {
+      weekMap.set(bucket, index + 1);
+    });
+
+    weekMaps.set(semesterKey, weekMap);
+  }
+
+  return weekMaps;
 }
 
 const INDONESIAN_MONTHS = [
@@ -128,35 +296,98 @@ const INDONESIAN_MONTHS = [
   "Desember",
 ];
 
+const INDONESIAN_WEEKDAYS = [
+  "Minggu",
+  "Senin",
+  "Selasa",
+  "Rabu",
+  "Kamis",
+  "Jumat",
+  "Sabtu",
+];
+
 function pad2(value) {
   return String(value).padStart(2, "0");
 }
 
-function formatIndonesianDateUTC(date) {
+function getJakartaCalendarDate(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function getJakartaTimeParts(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const hour = parts.find((part) => part.type === "hour")?.value;
+  const minute = parts.find((part) => part.type === "minute")?.value;
+
+  if (!hour || !minute) {
+    return null;
+  }
+
+  return { hour, minute };
+}
+
+function formatIndonesianDateUTC(date) {
+  const jakartaDate = getJakartaCalendarDate(date);
+  if (!jakartaDate) {
     return "🗓️ Tanpa Deadline";
   }
 
-  const day = pad2(date.getUTCDate());
-  const monthName = INDONESIAN_MONTHS[date.getUTCMonth()] || "";
-  const year = date.getUTCFullYear();
-  return `🗓️ ${day} ${monthName} ${year}`.trim();
+  const weekdayName = INDONESIAN_WEEKDAYS[jakartaDate.getUTCDay()] || "";
+  const day = pad2(jakartaDate.getUTCDate());
+  const monthName = INDONESIAN_MONTHS[jakartaDate.getUTCMonth()] || "";
+  const year = jakartaDate.getUTCFullYear();
+  return `🗓️ ${weekdayName}, ${day} ${monthName} ${year}`.trim();
 }
 
 function formatTimeUTC(date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+  const timeParts = getJakartaTimeParts(date);
+  if (!timeParts) {
     return "Tidak tersedia";
   }
 
-  const hour = pad2(date.getUTCHours());
-  const minute = pad2(date.getUTCMinutes());
-  return `${hour}:${minute}`;
+  return `${timeParts.hour}:${timeParts.minute}`;
 }
 
-function buildGroupedOutput(tasks) {
+function buildGroupedOutput(tasks, options = {}) {
+  const emptyMessage =
+    typeof options.emptyMessage === "string" && options.emptyMessage.trim()
+      ? options.emptyMessage
+      : "📝 Tidak ada tugas yang cocok.";
+
   if (!tasks.length) {
-    return "📝 Tidak ada tugas yang cocok.";
+    return emptyMessage;
   }
+
+  const useSemesterWeekNumbering = Boolean(options.useSemesterWeekNumbering);
 
   const sortedTasks = [...tasks].sort((a, b) => {
     const aDate = getDeadlineDate(a);
@@ -165,7 +396,7 @@ function buildGroupedOutput(tasks) {
     const bTime = bDate ? bDate.getTime() : Number.POSITIVE_INFINITY;
 
     if (aTime !== bTime) {
-      return aTime - bTime;
+      return bTime - aTime;
     }
 
     return String(getTaskTitle(a)).localeCompare(String(getTaskTitle(b)));
@@ -174,10 +405,31 @@ function buildGroupedOutput(tasks) {
   const lines = [];
   let currentWeekKey = "";
   let currentDateKey = "";
+  const semesterWeekMaps = useSemesterWeekNumbering
+    ? buildSemesterWeekMaps(sortedTasks)
+    : new Map();
 
   for (const item of sortedTasks) {
     const deadline = getDeadlineDate(item);
-    const weekNumber = deadline ? getIsoWeek(deadline) : null;
+    const semesterKey = getSemesterGroupKey(item);
+    const weekNumber = (() => {
+      if (!deadline) {
+        return null;
+      }
+
+      if (!useSemesterWeekNumbering || !semesterKey) {
+        return getIsoWeek(deadline);
+      }
+
+      const weekStart = getWeekStartUtcTimestamp(deadline);
+      const semesterWeekMap = semesterWeekMaps.get(semesterKey);
+
+      if (weekStart === null || !semesterWeekMap) {
+        return getIsoWeek(deadline);
+      }
+
+      return semesterWeekMap.get(weekStart) ?? getIsoWeek(deadline);
+    })();
     const weekKey = weekNumber === null ? "WEEK-TANPA-DEADLINE" : `WEEK-${weekNumber}`;
     const dateKey = deadline ? formatIndonesianDateUTC(deadline) : "🗓️ Tanpa Deadline";
 
@@ -196,7 +448,13 @@ function buildGroupedOutput(tasks) {
     }
 
     const timeText = deadline ? formatTimeUTC(deadline) : "Tidak tersedia";
-    lines.push(`- ${getTaskTitle(item)} - ${timeText}`);
+    const taskTitle = getTaskTitle(item);
+    const subjectName = getTaskSubjectName(item);
+    const displayTitle = subjectName
+      ? `${taskTitle} (${subjectName})`
+      : taskTitle;
+
+    lines.push(`- ${displayTitle} - ${timeText}`);
   }
 
   return lines.join("\n");
@@ -204,10 +462,13 @@ function buildGroupedOutput(tasks) {
 
 function processTaskCommand(homeworkList, args) {
   const list = Array.isArray(homeworkList) ? homeworkList : [];
+  const validation = validateTaskArgs(args);
 
-  const yearIndex = parseIndexArg(args, "y");
-  const semesterIndex = parseIndexArg(args, "s");
-  const useHistoryFilter = yearIndex !== null || semesterIndex !== null;
+  if (!validation.isValid) {
+    return validation.message;
+  }
+
+  const { yearIndex, semesterIndex, useHistoryFilter } = validation;
 
   let filtered = [...list];
 
@@ -253,8 +514,7 @@ function processTaskCommand(homeworkList, args) {
 
   if (!useHistoryFilter) {
     filtered = filtered.filter((item) => {
-      const deadline = getDeadlineDate(item);
-      return Boolean(deadline) && isPendingTask(item);
+      return hasUpcomingDeadline(item) && isPendingTask(item);
     });
   }
 
@@ -263,12 +523,19 @@ function processTaskCommand(homeworkList, args) {
     const bDate = getDeadlineDate(b);
     const aTime = aDate ? aDate.getTime() : Number.POSITIVE_INFINITY;
     const bTime = bDate ? bDate.getTime() : Number.POSITIVE_INFINITY;
-    return aTime - bTime;
+    return bTime - aTime;
   });
 
-  return buildGroupedOutput(filtered);
+  return buildGroupedOutput(filtered, {
+    emptyMessage: useHistoryFilter
+      ? "📝 Tidak ada tugas yang cocok."
+      : "📝 Tidak ada tugas tersedia.",
+    useSemesterWeekNumbering: useHistoryFilter,
+  });
 }
 
 module.exports = {
+  getTaskUsageMessage,
   processTaskCommand,
+  validateTaskArgs,
 };
