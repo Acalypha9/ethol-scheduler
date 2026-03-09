@@ -42,6 +42,7 @@ next-env.d.ts
 
 # auth credentials
 auth.json
+backend/auth.json
 
 # whatsapp local session/cache
 .wwebjs_auth/
