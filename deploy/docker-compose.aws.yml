@@ -49,17 +49,18 @@ services:
       - ./nginx/default.conf:/etc/nginx/templates/default-http.conf:ro
       - ./nginx/default.ssl.conf:/etc/nginx/templates/default-ssl.conf:ro
       - ./nginx/entrypoint.sh:/entrypoint.sh:ro
-      - ./letsencrypt/www:/var/www/certbot:ro
+      - letsencrypt_www:/var/www/certbot:ro
       - ./letsencrypt/live:/etc/nginx/certs:ro
 
   certbot:
     image: certbot/certbot:latest
     profiles: ["tls"]
     volumes:
-      - ./letsencrypt/www:/var/www/certbot
+      - letsencrypt_www:/var/www/certbot
       - ./letsencrypt/conf:/etc/letsencrypt
       - ./letsencrypt/live:/etc/nginx/certs
 
 volumes:
+  letsencrypt_www:
   wa_auth:
   wa_cache:

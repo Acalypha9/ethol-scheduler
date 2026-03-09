@@ -15,15 +15,14 @@ fi
 
 cd "$APP_DIR"
 
-mkdir -p deploy/letsencrypt/conf deploy/letsencrypt/live deploy/letsencrypt/www/.well-known/acme-challenge
+mkdir -p deploy/letsencrypt/conf deploy/letsencrypt/live
 
 docker compose -f deploy/docker-compose.aws.yml up -d backend wa-bot nginx
 
 probe_token="acme-preflight-$(date +%s)"
 probe_body="acme-ok-${probe_token}"
-probe_file="deploy/letsencrypt/www/.well-known/acme-challenge/${probe_token}"
-printf '%s' "$probe_body" > "$probe_file"
-trap 'rm -f "$probe_file"' EXIT
+docker compose -f deploy/docker-compose.aws.yml run --rm certbot sh -c "mkdir -p /var/www/certbot/.well-known/acme-challenge && printf '%s' '$probe_body' > /var/www/certbot/.well-known/acme-challenge/$probe_token"
+trap 'docker compose -f deploy/docker-compose.aws.yml run --rm certbot sh -c "rm -f /var/www/certbot/.well-known/acme-challenge/$probe_token" >/dev/null 2>&1 || true' EXIT
 
 for host in "$PRIMARY_DOMAIN" "$BOT_DOMAIN"; do
   local_response="$(curl -fsS --retry 10 --retry-connrefused --retry-delay 1 -H "Host: $host" "http://127.0.0.1/.well-known/acme-challenge/${probe_token}")"
