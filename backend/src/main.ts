@@ -7,7 +7,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const port = Number(process.env.PORT || '4000');
   const host = process.env.HOST || '0.0.0.0';
-  const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000')
+  const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:4000')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
@@ -31,6 +31,19 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  const httpServer = app.getHttpAdapter().getInstance();
+  httpServer.get('/', (_req: unknown, res: { json: (body: unknown) => void }) => {
+    res.json({
+      ok: true,
+      service: 'ethol-scheduler-backend',
+      apiBase: '/api',
+      websocketPath: '/ws/notifications',
+    });
+  });
+  httpServer.get('/health', (_req: unknown, res: { json: (body: unknown) => void }) => {
+    res.json({ ok: true, service: 'ethol-scheduler-backend' });
+  });
 
   await app.listen(port, host);
   console.log(`NestJS backend running on ${publicBaseUrl}`);
