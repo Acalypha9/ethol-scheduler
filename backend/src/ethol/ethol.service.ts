@@ -5,7 +5,7 @@ import type { Prisma } from '@prisma/client';
 import type { Subject, ScheduleEntry, CourseSchedule, TugasRaw, HomeworkItem, PresensiRaw, AttendanceItem } from '../types';
 import { PrismaService } from '../prisma/prisma.service';
 
-const AUTH_FILE = path.join(process.cwd(), 'auth.json');
+const AUTH_FILE = process.env.AUTH_FILE_PATH || path.join(process.cwd(), 'auth.json');
 const BASE_URL = 'https://ethol.pens.ac.id';
 const MIS_BASE_URL = 'https://mis.pens.ac.id';
 const USER_AGENT =

@@ -1,9 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EtholModule } from '../ethol/ethol.module';
 import { SyncService } from './sync.service';
 
 @Module({
-  imports: [EtholModule],
+  imports: [forwardRef(() => EtholModule)],
   providers: [SyncService],
   exports: [SyncService],
 })

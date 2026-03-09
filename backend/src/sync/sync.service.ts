@@ -62,7 +62,7 @@ const INDONESIAN_MONTHS: Record<string, number> = {
   desember: 11,
 };
 
-const AUTH_PATH = path.join(process.cwd(), 'auth.json');
+const AUTH_PATH = process.env.AUTH_FILE_PATH || path.join(process.cwd(), 'auth.json');
 
 @Injectable()
 export class SyncService implements OnModuleInit {
