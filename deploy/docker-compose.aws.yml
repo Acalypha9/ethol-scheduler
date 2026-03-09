@@ -1,20 +1,4 @@
 services:
-  frontend:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args:
-        BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:4000}
-    image: ${FRONTEND_IMAGE:-ethol-scheduler-frontend:latest}
-    restart: unless-stopped
-    env_file:
-      - ../.env
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-    depends_on:
-      - backend
-
   backend:
     build:
       context: ../backend
@@ -55,7 +39,6 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - frontend
       - backend
       - wa-bot
     ports:
