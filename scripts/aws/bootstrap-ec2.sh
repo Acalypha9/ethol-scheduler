@@ -7,7 +7,7 @@ APP_GROUP="${APP_GROUP:-ubuntu}"
 AWS_REGION="${AWS_REGION:-ap-southeast-1}"
 
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git unzip
+sudo apt-get install -y ca-certificates curl git unzip cron openssl
 
 if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sudo sh
@@ -31,6 +31,8 @@ fi
 sudo mkdir -p "$APP_DIR"
 sudo chown -R "$APP_USER":"$APP_GROUP" "$APP_DIR"
 
+sudo systemctl enable --now cron
+
 for file in ".env" "backend/.env" "wa-bot/.env"; do
   target="$APP_DIR/$file"
   if [[ ! -f "$target" ]]; then
@@ -48,5 +50,6 @@ Next steps:
    - $APP_DIR/.env
    - $APP_DIR/backend/.env
    - $APP_DIR/wa-bot/.env
-3. Optional: run 'aws configure set region $AWS_REGION' if you will pull from ECR
+3. Run the deploy script, then the Let's Encrypt setup script
+4. Optional: run 'aws configure set region $AWS_REGION' if you will pull from ECR
 EOF
