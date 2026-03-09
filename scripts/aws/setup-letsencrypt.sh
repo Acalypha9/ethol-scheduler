@@ -5,7 +5,6 @@ APP_DIR="${APP_DIR:-/opt/ethol-scheduler}"
 PRIMARY_DOMAIN="${1:-${PRIMARY_DOMAIN:-}}"
 BOT_DOMAIN="${2:-${BOT_DOMAIN:-}}"
 LETSENCRYPT_EMAIL="${3:-${LETSENCRYPT_EMAIL:-}}"
-WWW_DOMAIN="${WWW_DOMAIN:-www.${PRIMARY_DOMAIN}}"
 CERT_NAME="${CERT_NAME:-${PRIMARY_DOMAIN}}"
 STAGING="${STAGING:-0}"
 
@@ -23,7 +22,7 @@ openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
   -out deploy/letsencrypt/live/fullchain.pem \
   -subj "/CN=localhost"
 
-docker compose -f deploy/docker-compose.aws.yml up -d frontend backend wa-bot nginx
+docker compose -f deploy/docker-compose.aws.yml up -d backend wa-bot nginx
 
 rm -f deploy/letsencrypt/live/fullchain.pem deploy/letsencrypt/live/privkey.pem
 
@@ -41,7 +40,6 @@ docker compose -f deploy/docker-compose.aws.yml run --rm certbot certonly \
   --no-eff-email \
   --cert-name "$CERT_NAME" \
   -d "$PRIMARY_DOMAIN" \
-  -d "$WWW_DOMAIN" \
   -d "$BOT_DOMAIN"
 
 ln -sfn "../conf/live/$CERT_NAME/fullchain.pem" deploy/letsencrypt/live/fullchain.pem
@@ -49,4 +47,4 @@ ln -sfn "../conf/live/$CERT_NAME/privkey.pem" deploy/letsencrypt/live/privkey.pe
 
 docker compose -f deploy/docker-compose.aws.yml restart nginx
 
-echo "Let's Encrypt setup complete for: $PRIMARY_DOMAIN, $WWW_DOMAIN, $BOT_DOMAIN"
+echo "Let's Encrypt setup complete for: $PRIMARY_DOMAIN, $BOT_DOMAIN"

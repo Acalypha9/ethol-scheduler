@@ -33,7 +33,7 @@ sudo chown -R "$APP_USER":"$APP_GROUP" "$APP_DIR"
 
 sudo systemctl enable --now cron
 
-for file in ".env" "backend/.env" "wa-bot/.env"; do
+for file in "backend/.env" "wa-bot/.env"; do
   target="$APP_DIR/$file"
   if [[ ! -f "$target" ]]; then
     mkdir -p "$(dirname "$target")"
@@ -47,7 +47,6 @@ Bootstrap complete.
 Next steps:
 1. Put the repository at $APP_DIR
 2. Fill these files with production values:
-   - $APP_DIR/.env
    - $APP_DIR/backend/.env
    - $APP_DIR/wa-bot/.env
 3. Run the deploy script, then the Let's Encrypt setup script
