@@ -42,6 +42,21 @@ cd /opt/ethol-scheduler
 bash scripts/aws/deploy-ec2.sh
 ```
 
+After the stack is up, log in to ETHOL once through the backend so it can persist the session and trigger the initial sync:
+
+```bash
+curl -X POST http://127.0.0.1/api/login \
+  -H "Host: <primary-domain>" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"YOUR_ETHOL_EMAIL","password":"YOUR_ETHOL_PASSWORD"}'
+```
+
+Then watch for `Bootstrap sync completed` in backend logs:
+
+```bash
+docker compose -f deploy/docker-compose.aws.yml logs -f backend
+```
+
 ## 3. Enable HTTPS with Let's Encrypt
 
 After the first deploy, request certificates with:
@@ -58,8 +73,8 @@ bash scripts/aws/setup-letsencrypt.sh example.com whatsapp.example.com you@examp
 
 This script:
 
-1. creates temporary dummy certificates so nginx can boot
-2. starts the Docker stack
+1. starts the Docker stack in HTTP mode
+2. verifies the ACME challenge path locally and publicly before requesting a certificate
 3. requests a real Let's Encrypt certificate for:
    - `<primary-domain>`
    - `<bot-domain>`
@@ -104,6 +119,10 @@ The Compose stack stores WhatsApp session data in Docker volumes:
 
 - `wa_auth`
 - `wa_cache`
+
+The backend ETHOL session is also stored in a Docker volume:
+
+- `backend_auth`
 
 Keep your EC2 instance on persistent EBS storage and snapshot it regularly.
 

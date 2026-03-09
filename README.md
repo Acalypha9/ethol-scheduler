@@ -120,6 +120,12 @@ The deployment stack in `deploy/` is built for:
 - `whatsapp.<your-domain>` -> WhatsApp bot
 - EC2 + nginx + Let's Encrypt
 
+Notes:
+
+- backend auth is persisted in a Docker volume and reused across restarts
+- a successful `/api/login` now triggers the initial ETHOL bootstrap sync immediately
+- WhatsApp session data is persisted in Docker volumes too
+
 See `deploy/AWS-DEPLOYMENT.md` for the full deploy guide.
 
 ## Local Runtime Files
