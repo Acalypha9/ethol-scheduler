@@ -49,6 +49,11 @@ auth.json
 wa-bot/.wwebjs_auth/
 wa-bot/.wwebjs_cache/
 
+# letsencrypt runtime files
+deploy/letsencrypt/conf/
+deploy/letsencrypt/live/
+deploy/letsencrypt/www/
+
 # nested workspace artifacts
 backend/dist/
 backend/node_modules/
