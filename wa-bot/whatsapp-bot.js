@@ -75,6 +75,11 @@ async function fetchJson(endpoint) {
   }
 }
 
+function isUnauthorizedBackendError(error) {
+  const message = String(error?.message || "");
+  return message.includes("Request failed: 401") || message.includes("Unauthorized");
+}
+
 function formatTaskItem(item) {
   if (!item || typeof item !== "object") {
     return `- ${JSON.stringify(item)}`;
@@ -517,7 +522,13 @@ async function connectNotificationStream() {
     };
   } catch (error) {
     notificationConnecting = false;
-    console.error("[Bot WS] Failed to connect:", error.message || error);
+    if (isUnauthorizedBackendError(error)) {
+      console.error(
+        "[Bot WS] Backend token request returned 401. Login to ETHOL on the backend first so the bot can subscribe to notifications."
+      );
+    } else {
+      console.error("[Bot WS] Failed to connect:", error.message || error);
+    }
     scheduleNotificationReconnect();
   }
 }
