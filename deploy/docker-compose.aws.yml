@@ -45,7 +45,6 @@ services:
       API_BASE_URL: ${BOT_API_BASE_URL:-http://backend:4000}
       NOTIFICATION_WS_URL: ${BOT_NOTIFICATION_WS_URL:-ws://backend:4000/ws/notifications}
       BOT_PUBLIC_BASE_URL: ${BOT_PUBLIC_BASE_URL:-http://localhost:3005}
-      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
     volumes:
       - wa_auth:/app/.wwebjs_auth
       - wa_cache:/app/.wwebjs_cache

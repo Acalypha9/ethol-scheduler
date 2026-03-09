@@ -208,14 +208,11 @@ function buildHelpMessage() {
 }
 
 const chromePath = getChromePath();
-
-if (!chromePath) {
-  console.error("Chrome not found.");
-  console.error("Install Google Chrome first, then run this script again.");
-  process.exit(1);
+if (chromePath) {
+  console.log("Using Chrome at:", chromePath);
+} else {
+  console.log("Using bundled Puppeteer browser");
 }
-
-console.log("Using Chrome at:", chromePath);
 console.log(`WhatsApp browser mode: ${WA_HEADLESS ? "headless" : "visible"}`);
 
 app.use(express.json());
@@ -525,15 +522,20 @@ async function connectNotificationStream() {
   }
 }
 
+const puppeteerOptions = {
+  headless: WA_HEADLESS,
+  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+};
+
+if (chromePath) {
+  puppeteerOptions.executablePath = chromePath;
+}
+
 const waClient = new Client({
   authStrategy: new LocalAuth({
     dataPath: WA_AUTH_DATA_PATH,
   }),
-  puppeteer: {
-    headless: WA_HEADLESS,
-    executablePath: chromePath,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  },
+  puppeteer: puppeteerOptions,
 });
 
 waClient.on("qr", (qr) => {
