@@ -78,7 +78,7 @@ export class EtholController {
         );
       }
 
-      const schedules = await this.etholService.getScheduleDataFromDb();
+      const schedules = await this.etholService.getScheduleData();
       return {
         success: true,
         data: schedules,
@@ -120,7 +120,7 @@ export class EtholController {
         );
       }
 
-      const homework = await this.etholService.getHomeworkFromDb();
+      const homework = await this.etholService.getHomeworkData();
       return {
         success: true,
         data: homework,
@@ -161,7 +161,7 @@ export class EtholController {
         );
       }
 
-      const attendance = await this.etholService.getAttendanceFromDb();
+      const attendance = await this.etholService.getAttendanceData();
       return {
         success: true,
         data: attendance,

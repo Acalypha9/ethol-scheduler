@@ -71,7 +71,13 @@ async function fetchJson(endpoint) {
     const response = await axios.get(`${API_BASE_URL}${endpoint}`);
     return response.data;
   } catch (error) {
-    throw new Error(`Request failed: ${error.response?.status || error.message}`);
+    const status = error.response?.status;
+    const backendMessage =
+      error.response?.data?.error ||
+      error.response?.data?.message ||
+      error.response?.data?.pesan ||
+      error.message;
+    throw new Error(`Request failed: ${status || 'unknown'} ${backendMessage}`.trim());
   }
 }
 

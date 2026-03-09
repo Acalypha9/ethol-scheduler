@@ -607,6 +607,21 @@ export class EtholService {
     }));
   }
 
+  async getScheduleData(): Promise<CourseSchedule[]> {
+    try {
+      const schedules = await this.getScheduleDataFromDb();
+      if (schedules.length > 0) {
+        return schedules;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Schedule DB fallback triggered: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
+
+    return this.fetchScheduleData();
+  }
+
   async getHomeworkFromDb(): Promise<HomeworkItem[]> {
     const nim = this.getCurrentNimFromSession();
 
@@ -640,6 +655,21 @@ export class EtholService {
       semester: homework.semester,
       fileCount: homework.fileCount,
     }));
+  }
+
+  async getHomeworkData(): Promise<HomeworkItem[]> {
+    try {
+      const homework = await this.getHomeworkFromDb();
+      if (homework.length > 0) {
+        return homework;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Homework DB fallback triggered: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
+
+    return this.fetchAllHomework();
   }
 
   async getAttendanceFromDb(): Promise<AttendanceItem[]> {
@@ -783,6 +813,21 @@ export class EtholService {
     });
 
     return result;
+  }
+
+  async getAttendanceData(): Promise<AttendanceItem[]> {
+    try {
+      const attendance = await this.getAttendanceFromDb();
+      if (attendance.length > 0) {
+        return attendance;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Attendance DB fallback triggered: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+    }
+
+    return this.fetchAllAttendance();
   }
 
   private async fetchPresensiForSubject(
