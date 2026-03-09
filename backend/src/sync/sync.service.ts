@@ -78,7 +78,10 @@ export class SyncService implements OnModuleInit {
     const auth = this.readAuthFile();
     if (!auth) return;
 
-    const token = auth.token;
+    void this.triggerBootstrapFromToken(auth.token);
+  }
+
+  async triggerBootstrapFromToken(token: string): Promise<void> {
     const payload = this.decodeToken(token);
     if (!payload) {
       this.logger.warn('Bootstrap sync skipped: invalid JWT token in auth.json');
@@ -92,7 +95,7 @@ export class SyncService implements OnModuleInit {
       return;
     }
 
-    void this.bootstrapSync(nim, token);
+    await this.bootstrapSync(nim, token);
   }
 
   async bootstrapSync(nim: string, token: string): Promise<void> {
