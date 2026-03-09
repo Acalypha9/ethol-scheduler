@@ -9,14 +9,20 @@ import {
   Req,
   HttpException,
   HttpStatus,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { EtholService } from './ethol.service';
 import { LoginDto } from './dto/login.dto';
+import { SyncService } from '../sync/sync.service';
 
 @Controller()
 export class EtholController {
-  constructor(private readonly etholService: EtholService) {}
+  constructor(
+    private readonly etholService: EtholService,
+    @Inject(forwardRef(() => SyncService)) private readonly syncService: SyncService,
+  ) {}
 
   private extractProxyPath(req: Request): string {
     const params = req.params as Record<string, string | string[] | undefined>;
@@ -37,9 +43,14 @@ export class EtholController {
   async login(@Body() loginDto: LoginDto) {
     try {
       await this.etholService.login(loginDto.email, loginDto.password);
+      const token = this.etholService.getAuthToken();
+      if (!token) {
+        throw new Error('ETHOL login did not produce a usable token');
+      }
+      await this.syncService.triggerBootstrapFromToken(token);
       return {
         success: true,
-        message: 'Logged in and session saved',
+        message: 'Logged in, session saved, and initial sync started',
       };
     } catch (error) {
       const message =
