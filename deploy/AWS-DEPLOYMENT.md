@@ -4,30 +4,25 @@ This project is easiest to deploy on a single EC2 instance with Docker Compose.
 
 ## Why this shape
 
-- The Next.js frontend proxies to the Nest backend
 - The backend exposes HTTP APIs and a WebSocket endpoint
-- The WhatsApp bot needs persistent `.wwebjs_auth` session storage and a local Chromium binary
+- The WhatsApp bot needs persistent `.wwebjs_auth` session storage and a local Chromium-compatible browser
 - A single EC2 host keeps those services on one machine with simple networking and persistent storage
 
-## Files added for deployment
+## Files used for deployment
 
-- `Dockerfile` - frontend image
 - `backend/Dockerfile` - backend image
-- `wa-bot/Dockerfile` - bot image with Chromium
+- `wa-bot/Dockerfile` - bot image
 - `deploy/docker-compose.aws.yml` - production compose stack
-- `deploy/nginx/default.conf` - HTTP nginx template with ACME challenge support
+- `deploy/nginx/default.conf` - HTTP nginx template with ACME support
 - `deploy/nginx/default.ssl.conf` - HTTPS nginx template
-- `deploy/nginx/entrypoint.sh` - switches nginx between HTTP-only and HTTPS mode based on cert presence
-- `scripts/aws/bootstrap-ec2.sh` - one-time EC2 host setup
+- `deploy/nginx/entrypoint.sh` - selects HTTP-only vs HTTPS mode
+- `scripts/aws/bootstrap-ec2.sh` - one-time EC2 bootstrap
 - `scripts/aws/deploy-ec2.sh` - pull/build/up deployment script
-- `scripts/aws/setup-letsencrypt.sh` - initial Let's Encrypt certificate issuance
-- `scripts/aws/renew-letsencrypt.sh` - certificate renewal script
-- `scripts/aws/install-letsencrypt-renewal.sh` - installs a cron job for renewal
-- `.github/workflows/deploy-aws-ec2.yml` - optional push-based deploy via SSH
+- `scripts/aws/setup-letsencrypt.sh` - initial certificate issuance
+- `scripts/aws/renew-letsencrypt.sh` - certificate renewal
+- `scripts/aws/install-letsencrypt-renewal.sh` - installs renewal cron
 
 ## 1. EC2 bootstrap
-
-On a new Ubuntu EC2 instance:
 
 ```bash
 git clone <your-repo-url> /opt/ethol-scheduler
@@ -37,7 +32,6 @@ bash scripts/aws/bootstrap-ec2.sh
 
 Then fill these files:
 
-- `/opt/ethol-scheduler/.env`
 - `/opt/ethol-scheduler/backend/.env`
 - `/opt/ethol-scheduler/wa-bot/.env`
 
@@ -68,12 +62,11 @@ This script:
 2. starts the Docker stack
 3. requests a real Let's Encrypt certificate for:
    - `<primary-domain>`
-   - `www.<primary-domain>`
    - `<bot-domain>`
 4. links the live certificate into a generic path used by nginx
 5. restarts nginx in HTTPS mode
 
-To test safely against Let's Encrypt staging first:
+Test safely against staging first if needed:
 
 ```bash
 STAGING=1 bash scripts/aws/setup-letsencrypt.sh <primary-domain> <bot-domain> <email>
@@ -85,7 +78,7 @@ Install automatic renewal:
 bash scripts/aws/install-letsencrypt-renewal.sh <primary-domain>
 ```
 
-## 4. Deploy automatically from GitHub Actions
+## 4. GitHub Actions deployment
 
 Add these repository secrets:
 
@@ -102,7 +95,7 @@ Then pushing to `master` or running the workflow manually will:
 
 - `nginx` listens on ports `80` and `443`
 - `/.well-known/acme-challenge/*` is served for Let's Encrypt HTTP-01 validation
-- the default host routes `/` -> frontend, `/api/*` -> backend, and `/ws/*` -> backend WebSocket
+- the default host routes `/`, `/api/*`, and `/ws/*` to the backend
 - any host starting with `whatsapp.` routes to the WhatsApp bot container
 
 ## 6. Persistence
@@ -124,6 +117,6 @@ Let's Encrypt runtime data is stored under:
 
 - EC2 for app runtime
 - RDS PostgreSQL for `DATABASE_URL`
-- Route 53 or any DNS provider for public routing
+- Cloudflare or any DNS provider for public routing
 
-For the current project, plain EC2 + Docker Compose with Let's Encrypt is the simplest reliable starting point.
+For the current backend + WhatsApp bot project, plain EC2 + Docker Compose with Let's Encrypt is the simplest reliable starting point.
