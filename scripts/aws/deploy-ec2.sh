@@ -21,7 +21,7 @@ fi
 docker compose -f deploy/docker-compose.aws.yml pull --ignore-buildable || true
 docker compose -f deploy/docker-compose.aws.yml build
 docker compose -f deploy/docker-compose.aws.yml up -d backend
-docker compose -f deploy/docker-compose.aws.yml exec -T backend npx prisma db push
+docker compose -f deploy/docker-compose.aws.yml exec -T backend sh -lc 'npx prisma db push --url "$DATABASE_URL"'
 docker compose -f deploy/docker-compose.aws.yml up -d --remove-orphans
 docker image prune -f
 
