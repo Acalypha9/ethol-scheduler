@@ -212,6 +212,7 @@ function buildHelpMessage() {
   ].join("\n");
 }
 
+removeStaleBrowserLocks(WA_AUTH_DATA_PATH);
 const chromePath = getChromePath();
 if (chromePath) {
   console.log("Using Chrome at:", chromePath);
@@ -231,6 +232,32 @@ const seenNotificationIds = new Set();
 const recentNotificationKeys = new Map();
 const pendingMessages = [];
 const mentionCache = new Map();
+
+function removeStaleBrowserLocks(currentPath) {
+  if (!fs.existsSync(currentPath)) {
+    return;
+  }
+
+  const stats = fs.statSync(currentPath);
+  if (stats.isDirectory()) {
+    for (const child of fs.readdirSync(currentPath)) {
+      removeStaleBrowserLocks(path.join(currentPath, child));
+    }
+    return;
+  }
+
+  const staleLockNames = new Set(["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"]);
+  if (!staleLockNames.has(path.basename(currentPath))) {
+    return;
+  }
+
+  try {
+    fs.unlinkSync(currentPath);
+    console.log(`[Bot WA] Removed stale browser lock: ${currentPath}`);
+  } catch (error) {
+    console.warn(`[Bot WA] Failed to remove stale browser lock ${currentPath}:`, error.message || error);
+  }
+}
 
 function getConfiguredTargetChatId() {
   if (!TARGET_CHAT_ID || TARGET_CHAT_ID === ENV_TARGET_CHAT_PLACEHOLDER) {
