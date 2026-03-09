@@ -139,3 +139,24 @@ Let's Encrypt runtime data is stored under:
 - Cloudflare or any DNS provider for public routing
 
 For the current backend + WhatsApp bot project, plain EC2 + Docker Compose with Let's Encrypt is the simplest reliable starting point.
+
+## 8. RDS TLS
+
+The backend image includes the AWS RDS CA bundle at:
+
+- `/etc/ssl/certs/aws-rds-global-bundle.pem`
+
+Recommended `DATABASE_URL` format:
+
+```env
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DBNAME?schema=public&sslmode=require
+DATABASE_SSL_CA_PATH=/etc/ssl/certs/aws-rds-global-bundle.pem
+```
+
+If you are still diagnosing certificate issues temporarily, you can allow invalid certs only as a last resort:
+
+```env
+DATABASE_SSL_ACCEPT_INVALID_CERTS=true
+```
+
+Do not leave that enabled once the CA-based connection works.
