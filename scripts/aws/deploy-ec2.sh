@@ -20,7 +20,7 @@ fi
 
 docker compose -f deploy/docker-compose.aws.yml pull --ignore-buildable || true
 docker compose -f deploy/docker-compose.aws.yml build
-docker compose -f deploy/docker-compose.aws.yml run --rm backend npx prisma db push --skip-generate
+docker compose -f deploy/docker-compose.aws.yml run --rm backend npx prisma db push
 docker compose -f deploy/docker-compose.aws.yml up -d --remove-orphans
 docker image prune -f
 
