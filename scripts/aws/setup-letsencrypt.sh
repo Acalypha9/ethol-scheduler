@@ -15,16 +15,34 @@ fi
 
 cd "$APP_DIR"
 
-mkdir -p deploy/letsencrypt/conf deploy/letsencrypt/live deploy/letsencrypt/www
-
-openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
-  -keyout deploy/letsencrypt/live/privkey.pem \
-  -out deploy/letsencrypt/live/fullchain.pem \
-  -subj "/CN=localhost"
+mkdir -p deploy/letsencrypt/conf deploy/letsencrypt/live deploy/letsencrypt/www/.well-known/acme-challenge
 
 docker compose -f deploy/docker-compose.aws.yml up -d backend wa-bot nginx
 
-rm -f deploy/letsencrypt/live/fullchain.pem deploy/letsencrypt/live/privkey.pem
+probe_token="acme-preflight-$(date +%s)"
+probe_body="acme-ok-${probe_token}"
+probe_file="deploy/letsencrypt/www/.well-known/acme-challenge/${probe_token}"
+printf '%s' "$probe_body" > "$probe_file"
+trap 'rm -f "$probe_file"' EXIT
+
+for host in "$PRIMARY_DOMAIN" "$BOT_DOMAIN"; do
+  local_response="$(curl -fsS --retry 10 --retry-connrefused --retry-delay 1 -H "Host: $host" "http://127.0.0.1/.well-known/acme-challenge/${probe_token}")"
+  if [[ "$local_response" != "$probe_body" ]]; then
+    echo "Local ACME preflight failed for $host"
+    echo "Expected: $probe_body"
+    echo "Received: $local_response"
+    exit 1
+  fi
+
+  public_response="$(curl -fsS --retry 5 --retry-delay 2 --connect-timeout 10 "http://${host}/.well-known/acme-challenge/${probe_token}")"
+  if [[ "$public_response" != "$probe_body" ]]; then
+    echo "Public ACME preflight failed for $host"
+    echo "Expected: $probe_body"
+    echo "Received: $public_response"
+    echo "Check that DNS points to this EC2 host, Cloudflare is set to DNS only, and port 80 is open."
+    exit 1
+  fi
+done
 
 staging_arg=""
 if [[ "$STAGING" == "1" ]]; then
