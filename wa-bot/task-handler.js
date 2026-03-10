@@ -530,7 +530,7 @@ function processTaskCommand(homeworkList, args) {
     emptyMessage: useHistoryFilter
       ? "📝 Tidak ada tugas yang cocok."
       : "📝 Tidak ada tugas tersedia.",
-    useSemesterWeekNumbering: useHistoryFilter,
+    useSemesterWeekNumbering: true,
   });
 }
 
